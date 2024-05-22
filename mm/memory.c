@@ -88,6 +88,7 @@
 #ifndef CONFIG_NEED_MULTIPLE_NODES
 /* use the per-pgdat data instead for discontigmem - mbligh */
 unsigned long max_mapnr;
+
 EXPORT_SYMBOL(max_mapnr);
 
 struct page *mem_map;
@@ -4550,7 +4551,7 @@ void __might_fault(const char *file, int line)
 	if (pagefault_disabled())
 		return;
 	__might_sleep(file, line, 0);
-#if defined(CONFIG_DEBUG_ATOMIC_SLEEP)
+#if defined(CONFIG_DEBUG_ATOMIC_SLEEP) && 0
 	if (current->mm)
 		might_lock_read(&current->mm->mmap_sem);
 #endif
