@@ -45,6 +45,7 @@
 #include <linux/slab.h>
 #include <linux/compat.h>
 
+#include <asm/cacheflush.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/div64.h>
@@ -55,6 +56,10 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/timer.h>
+
+#ifdef CONFIG_MTK_SCHED_MONITOR
+#include "mtk_sched_mon.h"
+#endif
 
 __visible u64 jiffies_64 __cacheline_aligned_in_smp = INITIAL_JIFFIES;
 
@@ -1181,6 +1186,31 @@ int try_to_del_timer_sync(struct timer_list *timer)
 
 	raw_spin_unlock_irqrestore(&base->lock, flags);
 
+#if defined(CONFIG_SMP) && !defined(CONFIG_ARM64_LSE_ATOMICS)
+
+#ifndef dmac_flush_range
+#define dmac_flush_range __dma_flush_range
+#endif
+
+	/*
+	 * MTK PATCH to fix ARM v8.0 live spinlock issue.
+	 *
+	 * Flush lock value here if timer deletion is not finished.
+	 *
+	 * In this case, Other CPU may need to get cpu_base spinlock
+	 * to update running timer information. Flush lock value here
+	 * to promise that other CPU can see correct lock value to avoid
+	 * starvation or unfair spinlock competition.
+	 */
+#ifdef CONFIG_ARM64
+		__dma_flush_area((void *)&base->lock,
+				   sizeof(raw_spinlock_t));
+#else
+		dmac_flush_range((void *)&base->lock,
+			(void *)&base->lock + sizeof(spinlock_t) - 1);
+#endif
+#endif
+
 	return ret;
 }
 EXPORT_SYMBOL(try_to_del_timer_sync);
@@ -1276,7 +1306,13 @@ static void call_timer_fn(struct timer_list *timer, void (*fn)(unsigned long),
 	lock_map_acquire(&lockdep_map);
 
 	trace_timer_expire_entry(timer);
+#ifdef CONFIG_MTK_SCHED_MONITOR
+	mt_trace_sft_start(fn);
+#endif
 	fn(data);
+#ifdef CONFIG_MTK_SCHED_MONITOR
+	mt_trace_sft_end(fn);
+#endif
 	trace_timer_expire_exit(timer);
 
 	lock_map_release(&lockdep_map);

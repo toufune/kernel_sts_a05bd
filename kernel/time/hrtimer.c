@@ -53,11 +53,16 @@
 #include <linux/freezer.h>
 #include <linux/compat.h>
 
+#include <asm/cacheflush.h>
 #include <linux/uaccess.h>
 
 #include <trace/events/timer.h>
 
 #include "tick-internal.h"
+
+#ifdef CONFIG_MTK_SCHED_MONITOR
+#include "mtk_sched_mon.h"
+#endif
 
 /*
  * The timer bases:
@@ -470,7 +475,9 @@ static ktime_t __hrtimer_get_next_event(struct hrtimer_cpu_base *cpu_base,
 	unsigned int active = cpu_base->active_bases;
 	ktime_t expires, expires_next = KTIME_MAX;
 
-	hrtimer_update_next_timer(cpu_base, NULL);
+	/* Skip cpu_base update if a timer is being excluded. */
+	if (exclude == NULL)
+		hrtimer_update_next_timer(cpu_base, NULL);
 	for (; active; base++, active >>= 1) {
 		struct timerqueue_node *next;
 		struct hrtimer *timer;
@@ -1031,6 +1038,34 @@ int hrtimer_try_to_cancel(struct hrtimer *timer)
 
 	unlock_hrtimer_base(timer, &flags);
 
+#if defined(CONFIG_SMP) && !defined(CONFIG_ARM64_LSE_ATOMICS)
+
+#ifndef dmac_flush_range
+#define dmac_flush_range __dma_flush_range
+#endif
+
+	/*
+	 * MTK PATCH to fix ARM v8.0 live spinlock issue.
+	 *
+	 * Flush lock value here if timer cancelling is not finished.
+	 *
+	 * In this case, Other CPU may need to get cpu_base spinlock
+	 * to update running timer information. Flush lock value here
+	 * to promise that other CPU can see correct lock value to avoid
+	 * starvation or unfair spinlock competition.
+	 */
+	if (ret == -1 && irqs_disabled()) {
+#ifdef CONFIG_ARM64
+		__dma_flush_area((void *)&base->cpu_base->lock,
+				   sizeof(raw_spinlock_t));
+#else
+		dmac_flush_range((void *)&base->cpu_base->lock,
+				   (void *)&base->cpu_base->lock +
+				   sizeof(raw_spinlock_t) - 1);
+#endif
+	}
+#endif
+
 	return ret;
 
 }
@@ -1256,7 +1291,13 @@ static void __run_hrtimer(struct hrtimer_cpu_base *cpu_base,
 	 */
 	raw_spin_unlock(&cpu_base->lock);
 	trace_hrtimer_expire_entry(timer, now);
+#ifdef CONFIG_MTK_SCHED_MONITOR
+	mt_trace_hrt_start(fn);
+#endif
 	restart = fn(timer);
+#ifdef CONFIG_MTK_SCHED_MONITOR
+	mt_trace_hrt_end(fn);
+#endif
 	trace_hrtimer_expire_exit(timer);
 	raw_spin_lock(&cpu_base->lock);
 
