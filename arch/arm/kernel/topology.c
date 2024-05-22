@@ -31,17 +31,19 @@
 #include <asm/cputype.h>
 #include <asm/topology.h>
 
-static inline
+#ifndef CONFIG_MTK_UNIFY_POWER
+inline
 const struct sched_group_energy * const cpu_core_energy(int cpu)
 {
 	return sge_array[cpu][SD_LEVEL0];
 }
 
-static inline
+inline
 const struct sched_group_energy * const cpu_cluster_energy(int cpu)
 {
 	return sge_array[cpu][SD_LEVEL1];
 }
+#endif
 
 /*
  * cpu capacity scale management
@@ -78,8 +80,17 @@ struct cpu_efficiency {
 static const struct cpu_efficiency table_efficiency[] = {
 	{"arm,cortex-a15", 3891},
 	{"arm,cortex-a7",  2048},
+	{ "arm,cortex-a75", 3630 },
+	{ "arm,cortex-a73", 3630 },
+	{ "arm,cortex-a72", 4186 },
+	{ "arm,cortex-a57", 3891 },
+	{ "arm,cortex-a53", 2048 },
+	{ "arm,cortex-a55", 2048 },
+	{ "arm,cortex-a35", 1661 },
 	{NULL, },
 };
+
+#include "topology_dts.c"
 
 static unsigned long *__cpu_capacity;
 #define cpu_capacity(cpu)	__cpu_capacity[cpu]
@@ -350,3 +361,17 @@ void __init init_cpu_topology(void)
 	/* Set scheduler topology descriptor */
 	set_sched_topology(arm_topology);
 }
+
+#ifdef CONFIG_MTK_SCHED_RQAVG_KS
+/* To add this function for sched_avg.c */
+unsigned long get_cpu_orig_capacity(unsigned int cpu)
+{
+	//TODO: Porting the function prototype at first
+	u64 capacity = cpu_capacity(cpu);
+	// if (!capacity || !max_cpu_perf)
+	//	return 1024;
+	// capacity *= SCHED_CAPACITY_SCALE;
+	// capacity = div64_u64(capacity, max_cpu_perf);
+	return capacity;
+}
+#endif
