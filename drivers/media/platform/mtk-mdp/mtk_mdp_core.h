@@ -22,6 +22,7 @@
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-dma-contig.h>
+#include <linux/soc/mediatek/mtk-cmdq.h>
 
 #include "mtk_mdp_vpu.h"
 #include "mtk_mdp_comp.h"
@@ -39,6 +40,9 @@
 #define MTK_MDP_SRC_FMT			BIT(1)
 #define MTK_MDP_DST_FMT			BIT(2)
 #define MTK_MDP_CTX_ERROR		BIT(5)
+
+#define MTK_MDP_EVENT_NR 13
+
 
 /**
  *  struct mtk_mdp_pix_align - alignement of image
@@ -89,12 +93,29 @@ struct mtk_mdp_addr {
  * @hflip: horizontal flip
  * @vflip: vertical flip
  * @global_alpha: the alpha value of current frame
+ * @ctrl_sharpness_enable: enable sharpness feature
+ * @ctrl_sharpness_level:  the level of sharpness feature
+ * @ctrl_dynamic_contrast_enable: enable dynamic contrast feature
+ * @ctrl_brightness_enable: enable brightness feature
+ * @ctrl_brightness_level: the level of brightness feature
+ * @ctrl_contrast_enable: enable static contrast feature
+ * @ctrl_contrast_level: the level of static contrast feature
+ * @eng_flag: enagine flag
  */
 struct mtk_mdp_ctrls {
 	struct v4l2_ctrl *rotate;
 	struct v4l2_ctrl *hflip;
 	struct v4l2_ctrl *vflip;
 	struct v4l2_ctrl *global_alpha;
+	struct v4l2_ctrl *ctrl_sharpness_enable;
+	struct v4l2_ctrl *ctrl_sharpness_level;
+	struct v4l2_ctrl *ctrl_dynamic_contrast_enable;
+
+	struct v4l2_ctrl *ctrl_brightness_enable;
+	struct v4l2_ctrl *ctrl_brightness_level;
+	struct v4l2_ctrl *ctrl_contrast_enable;
+	struct v4l2_ctrl *ctrl_contrast_level;
+	struct v4l2_ctrl *eng_flag;
 };
 
 /**
@@ -146,6 +167,8 @@ struct mtk_mdp_variant {
  * @pdev:	pointer to the image processor platform device
  * @variant:	the IP variant information
  * @id:		image processor device index (0..MTK_MDP_MAX_DEVS)
+ * @driver:		driver name, e.g. "mtk-mdp", "mtk-mdp-1"
+ * @platform:		platform name, e.g. "platform:mt8173"
  * @comp:	MDP function components
  * @m2m_dev:	v4l2 memory-to-memory device data
  * @ctx_list:	list of struct mtk_mdp_ctx
@@ -164,6 +187,8 @@ struct mtk_mdp_dev {
 	struct platform_device		*pdev;
 	struct mtk_mdp_variant		*variant;
 	u16				id;
+	char				driver[16];
+	char				platform[32];
 	struct mtk_mdp_comp		*comp[MTK_MDP_COMP_ID_MAX];
 	struct v4l2_m2m_dev		*m2m_dev;
 	struct list_head		ctx_list;
@@ -175,6 +200,8 @@ struct mtk_mdp_dev {
 	unsigned long			id_counter;
 	struct workqueue_struct		*wdt_wq;
 	struct work_struct		wdt_work;
+	struct cmdq_client		*cmdq_client;
+	int				cmdq_event[MTK_MDP_EVENT_NR];
 };
 
 /**
@@ -213,6 +240,7 @@ struct mtk_mdp_ctx {
 	int				rotation;
 	u32				hflip:1;
 	u32				vflip:1;
+	u32				eng_flag;
 	struct mtk_mdp_dev		*mdp_dev;
 	struct v4l2_m2m_ctx		*m2m_ctx;
 	struct v4l2_fh			fh;
@@ -227,6 +255,8 @@ struct mtk_mdp_ctx {
 	struct mtk_mdp_vpu		vpu;
 	struct mutex			slock;
 	struct work_struct		work;
+	struct cmdq_pkt			*cmdq_handle;
+	struct mdp_pq_info              pq;
 };
 
 extern int mtk_mdp_dbg_level;

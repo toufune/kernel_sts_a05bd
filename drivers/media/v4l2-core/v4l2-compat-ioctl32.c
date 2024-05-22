@@ -488,6 +488,7 @@ static int get_v4l2_buffer32(struct v4l2_buffer __user *kp,
 {
 	u32 type;
 	u32 length;
+	u32 reserved2;
 	enum v4l2_memory memory;
 	struct v4l2_plane32 __user *uplane32;
 	struct v4l2_plane __user *uplane;
@@ -502,7 +503,11 @@ static int get_v4l2_buffer32(struct v4l2_buffer __user *kp,
 	    get_user(memory, &up->memory) ||
 	    put_user(memory, &kp->memory) ||
 	    get_user(length, &up->length) ||
-	    put_user(length, &kp->length))
+	    put_user(length, &kp->length) ||
+	    get_user(reserved2, &up->reserved2) ||
+	    put_user(reserved2, &kp->reserved2) ||
+	    get_user(reserved2, &up->reserved) ||
+	    put_user(reserved2, &kp->reserved))
 		return -EFAULT;
 
 	if (V4L2_TYPE_IS_OUTPUT(type))

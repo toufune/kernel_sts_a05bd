@@ -20,9 +20,11 @@
 
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_ddp_comp.h"
+#include "mtk_drm_debugfs.h"
 
 #define DISP_COLOR_CFG_MAIN			0x0400
 #define DISP_COLOR_START_MT2701			0x0f00
+#define DISP_COLOR_START_MT8168			0x0c00
 #define DISP_COLOR_START_MT8173			0x0c00
 #define DISP_COLOR_START(comp)			((comp)->data->color_offset)
 #define DISP_COLOR_WIDTH(comp)			(DISP_COLOR_START(comp) + 0x50)
@@ -53,21 +55,21 @@ static inline struct mtk_disp_color *comp_to_color(struct mtk_ddp_comp *comp)
 
 static void mtk_color_config(struct mtk_ddp_comp *comp, unsigned int w,
 			     unsigned int h, unsigned int vrefresh,
-			     unsigned int bpc)
+			     unsigned int bpc, void *handle)
 {
 	struct mtk_disp_color *color = comp_to_color(comp);
 
-	writel(w, comp->regs + DISP_COLOR_WIDTH(color));
-	writel(h, comp->regs + DISP_COLOR_HEIGHT(color));
+	mtk_ddp_write(comp, w, DISP_COLOR_WIDTH(color), handle);
+	mtk_ddp_write(comp, h, DISP_COLOR_HEIGHT(color), handle);
 }
 
-static void mtk_color_start(struct mtk_ddp_comp *comp)
+static void mtk_color_start(struct mtk_ddp_comp *comp, void *handle)
 {
 	struct mtk_disp_color *color = comp_to_color(comp);
 
-	writel(COLOR_BYPASS_ALL | COLOR_SEQ_SEL,
-	       comp->regs + DISP_COLOR_CFG_MAIN);
-	writel(0x1, comp->regs + DISP_COLOR_START(color));
+	mtk_ddp_write(comp, COLOR_BYPASS_ALL | COLOR_SEQ_SEL,
+		DISP_COLOR_CFG_MAIN, handle);
+	mtk_ddp_write(comp, 0x1, DISP_COLOR_START(color), handle);
 }
 
 static const struct mtk_ddp_comp_funcs mtk_disp_color_funcs = {
@@ -113,6 +115,9 @@ static int mtk_disp_color_probe(struct platform_device *pdev)
 	int comp_id;
 	int ret;
 
+	MTK_DRM_DEBUG_DRIVER("dev_name %s of_node %s\n",
+			     dev_name(dev), dev->of_node->name);
+
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -152,6 +157,10 @@ static const struct mtk_disp_color_data mt2701_color_driver_data = {
 	.color_offset = DISP_COLOR_START_MT2701,
 };
 
+static const struct mtk_disp_color_data mt8168_color_driver_data = {
+	.color_offset = DISP_COLOR_START_MT8168,
+};
+
 static const struct mtk_disp_color_data mt8173_color_driver_data = {
 	.color_offset = DISP_COLOR_START_MT8173,
 };
@@ -159,6 +168,8 @@ static const struct mtk_disp_color_data mt8173_color_driver_data = {
 static const struct of_device_id mtk_disp_color_driver_dt_match[] = {
 	{ .compatible = "mediatek,mt2701-disp-color",
 	  .data = &mt2701_color_driver_data},
+	{ .compatible = "mediatek,mt8168-disp-color",
+	  .data = &mt8168_color_driver_data},
 	{ .compatible = "mediatek,mt8173-disp-color",
 	  .data = &mt8173_color_driver_data},
 	{},

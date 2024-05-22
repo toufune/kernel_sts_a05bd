@@ -11,7 +11,15 @@ mediatek-drm-y := mtk_disp_color.o \
 		  mtk_drm_plane.o \
 		  mtk_dsi.o \
 		  mtk_mipi_tx.o \
-		  mtk_dpi.o
+		  mtk_mt8173_mipi_tx.o \
+		  mtk_mt8183_mipi_tx.o \
+		  mtk_dpi.o \
+		  mtk_drm_fbdev.o \
+		  mtk_writeback.o
+
+ifeq ($(CONFIG_DEBUG_FS),y)
+mediatek-drm-y += mtk_drm_debugfs.o
+endif
 
 obj-$(CONFIG_DRM_MEDIATEK) += mediatek-drm.o
 

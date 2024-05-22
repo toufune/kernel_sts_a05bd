@@ -31,7 +31,7 @@
 
 #include "xhci.h"
 #include "xhci-mtk.h"
-
+#include "xhci-mtk-test.h"
 /* ip_pw_ctrl0 register */
 #define CTRL0_IP_SW_RST	BIT(0)
 
@@ -171,6 +171,7 @@ static int xhci_mtk_host_disable(struct xhci_hcd_mtk *mtk)
 		dev_err(mtk->dev, "ip sleep failed!!!\n");
 		return ret;
 	}
+
 	return 0;
 }
 
@@ -552,10 +553,13 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 		return PTR_ERR(mtk->vusb33);
 	}
 
+	/*Set the clock control in mtu3 plat*/
 	mtk->sys_clk = devm_clk_get(dev, "sys_ck");
 	if (IS_ERR(mtk->sys_clk)) {
-		dev_err(dev, "fail to get sys_ck\n");
-		return PTR_ERR(mtk->sys_clk);
+		if (PTR_ERR(mtk->sys_clk) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+
+		mtk->sys_clk = NULL;
 	}
 
 	/*
@@ -688,6 +692,11 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 	if (ret)
 		goto dealloc_usb2_hcd;
 
+	#if IS_ENABLED(CONFIG_USB_MTK_HQA_TEST)
+		mu3h_hqa_create_attr(dev);
+	#endif
+
+
 	return 0;
 
 dealloc_usb2_hcd:
@@ -724,6 +733,10 @@ static int xhci_mtk_remove(struct platform_device *dev)
 	struct xhci_hcd_mtk *mtk = platform_get_drvdata(dev);
 	struct usb_hcd	*hcd = mtk->hcd;
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+
+	#if IS_ENABLED(CONFIG_USB_MTK_HQA_TEST)
+		mu3h_hqa_remove_attr(&dev->dev);
+	#endif
 
 	usb_remove_hcd(xhci->shared_hcd);
 	xhci_mtk_phy_power_off(mtk);
@@ -765,6 +778,7 @@ static int __maybe_unused xhci_mtk_suspend(struct device *dev)
 	xhci_mtk_phy_power_off(mtk);
 	xhci_mtk_clks_disable(mtk);
 	usb_wakeup_enable(mtk);
+
 	return 0;
 }
 
@@ -784,6 +798,7 @@ static int __maybe_unused xhci_mtk_resume(struct device *dev)
 	usb_hcd_poll_rh_status(xhci->shared_hcd);
 	set_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 	usb_hcd_poll_rh_status(hcd);
+
 	return 0;
 }
 

@@ -20,13 +20,17 @@
 
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_ddp_comp.h"
+#include "mtk_drm_debugfs.h"
 
 #define DISP_REG_OVL_INTEN			0x0004
-#define OVL_FME_CPL_INT					BIT(1)
+#define OVL_FME_CPL_INT				BIT(1)
 #define DISP_REG_OVL_INTSTA			0x0008
 #define DISP_REG_OVL_EN				0x000c
 #define DISP_REG_OVL_RST			0x0014
 #define DISP_REG_OVL_ROI_SIZE			0x0020
+#define DISP_REG_OVL_DATAPATH_CON		0x0024
+#define OVL_LAYER_SMI_ID_EN			BIT(0)
+#define OVL_BGCLR_SEL_IN                        BIT(2)
 #define DISP_REG_OVL_ROI_BGCLR			0x0028
 #define DISP_REG_OVL_SRC_CON			0x002c
 #define DISP_REG_OVL_CON(n)			(0x0030 + 0x20 * (n))
@@ -36,10 +40,13 @@
 #define DISP_REG_OVL_RDMA_CTRL(n)		(0x00c0 + 0x20 * (n))
 #define DISP_REG_OVL_RDMA_GMC(n)		(0x00c8 + 0x20 * (n))
 #define DISP_REG_OVL_ADDR_MT2701		0x0040
+#define DISP_REG_OVL_ADDR_MT8168		0x0f40
 #define DISP_REG_OVL_ADDR_MT8173		0x0f40
 #define DISP_REG_OVL_ADDR(ovl, n)		((ovl)->data->addr + 0x20 * (n))
 
-#define	OVL_RDMA_MEM_GMC	0x40402020
+#define GMC_THRESHOLD_BITS	16
+#define GMC_THRESHOLD_HIGH	((1 << GMC_THRESHOLD_BITS) / 4)
+#define GMC_THRESHOLD_LOW	((1 << GMC_THRESHOLD_BITS) / 8)
 
 #define OVL_CON_BYTE_SWAP	BIT(24)
 #define OVL_CON_MTX_YUV_TO_RGB	(6 << 16)
@@ -57,7 +64,10 @@
 
 struct mtk_disp_ovl_data {
 	unsigned int addr;
+	unsigned int gmc_bits;
+	unsigned int layer_nr;
 	bool fmt_rgb565_is_0;
+	bool smi_id_en;
 };
 
 /**
@@ -71,6 +81,16 @@ struct mtk_disp_ovl {
 	const struct mtk_disp_ovl_data	*data;
 };
 
+void mtk_ovl_reset(struct mtk_ddp_comp *comp, void *handle)
+{
+	mtk_ddp_write(comp, 0x1, DISP_REG_OVL_RST, handle);
+	mtk_ddp_write(comp, 0x0, DISP_REG_OVL_RST, handle);
+
+	MTK_DRM_DEBUG_DRIVER(
+	"ovl irq status 0x%X\n",
+	readl(comp->regs + DISP_REG_OVL_INTSTA));
+}
+
 static inline struct mtk_disp_ovl *comp_to_ovl(struct mtk_ddp_comp *comp)
 {
 	return container_of(comp, struct mtk_disp_ovl, ddp_comp);
@@ -81,11 +101,15 @@ static irqreturn_t mtk_disp_ovl_irq_handler(int irq, void *dev_id)
 	struct mtk_disp_ovl *priv = dev_id;
 	struct mtk_ddp_comp *ovl = &priv->ddp_comp;
 
+	MTK_DRM_DEBUG_VBL("\n");
+
 	/* Clear frame completion interrupt */
 	writel(0x0, ovl->regs + DISP_REG_OVL_INTSTA);
 
-	if (!priv->crtc)
+	if (!priv->crtc) {
+		MTK_DRM_DEBUG_DRIVER("crtc is invalid!\n");
 		return IRQ_NONE;
+	}
 
 	mtk_crtc_ddp_irq(priv->crtc, ovl);
 
@@ -93,69 +117,118 @@ static irqreturn_t mtk_disp_ovl_irq_handler(int irq, void *dev_id)
 }
 
 static void mtk_ovl_enable_vblank(struct mtk_ddp_comp *comp,
-				  struct drm_crtc *crtc)
+				  struct drm_crtc *crtc, void *handle)
 {
 	struct mtk_disp_ovl *ovl = comp_to_ovl(comp);
 
+	MTK_DRM_DEBUG_DRIVER("crtc 0x%p\n", crtc);
 	ovl->crtc = crtc;
 	writel(0x0, comp->regs + DISP_REG_OVL_INTSTA);
 	writel_relaxed(OVL_FME_CPL_INT, comp->regs + DISP_REG_OVL_INTEN);
 }
 
-static void mtk_ovl_disable_vblank(struct mtk_ddp_comp *comp)
+static void mtk_ovl_disable_vblank(struct mtk_ddp_comp *comp, void *handle)
 {
 	struct mtk_disp_ovl *ovl = comp_to_ovl(comp);
+
+	MTK_DRM_DEBUG_DRIVER("\n");
 
 	ovl->crtc = NULL;
 	writel_relaxed(0x0, comp->regs + DISP_REG_OVL_INTEN);
 }
 
-static void mtk_ovl_start(struct mtk_ddp_comp *comp)
+static void mtk_ovl_start(struct mtk_ddp_comp *comp, void *handle)
 {
-	writel_relaxed(0x1, comp->regs + DISP_REG_OVL_EN);
+	MTK_DRM_DEBUG_DRIVER("\n");
+
+	mtk_ddp_write_relaxed(comp, 0x1, DISP_REG_OVL_EN, handle);
 }
 
-static void mtk_ovl_stop(struct mtk_ddp_comp *comp)
+static void mtk_ovl_stop(struct mtk_ddp_comp *comp, void *handle)
 {
-	writel_relaxed(0x0, comp->regs + DISP_REG_OVL_EN);
+	MTK_DRM_DEBUG_DRIVER("\n");
+
+	mtk_ddp_write_relaxed(comp, 0x0, DISP_REG_OVL_EN, handle);
 }
 
 static void mtk_ovl_config(struct mtk_ddp_comp *comp, unsigned int w,
 			   unsigned int h, unsigned int vrefresh,
-			   unsigned int bpc)
+			   unsigned int bpc, void *handle)
 {
+	struct mtk_disp_ovl *ovl = comp_to_ovl(comp);
+
+	MTK_DRM_DEBUG_DRIVER("comp_id %d irq %d %dx%d@%dHZ\n",
+			     comp->id, comp->irq, w, h, vrefresh);
+
 	if (w != 0 && h != 0)
-		writel_relaxed(h << 16 | w, comp->regs + DISP_REG_OVL_ROI_SIZE);
-	writel_relaxed(0x0, comp->regs + DISP_REG_OVL_ROI_BGCLR);
+		mtk_ddp_write_relaxed(comp, h << 16 | w,
+			DISP_REG_OVL_ROI_SIZE, handle);
+	mtk_ddp_write_relaxed(comp, 0x0, DISP_REG_OVL_ROI_BGCLR, handle);
 
-	writel(0x1, comp->regs + DISP_REG_OVL_RST);
-	writel(0x0, comp->regs + DISP_REG_OVL_RST);
+	if (ovl->data->smi_id_en)
+		mtk_ddp_write_mask(comp, OVL_LAYER_SMI_ID_EN,
+				   DISP_REG_OVL_DATAPATH_CON,
+				   OVL_LAYER_SMI_ID_EN, handle);
+
+#ifdef CONFIG_MTK_DISPLAY_CMDQ
+	mtk_ovl_reset(comp, handle);
+#endif
 }
 
-static void mtk_ovl_layer_on(struct mtk_ddp_comp *comp, unsigned int idx)
+static unsigned int mtk_ovl_layer_nr(struct mtk_ddp_comp *comp)
 {
-	unsigned int reg;
+	struct mtk_disp_ovl *ovl = comp_to_ovl(comp);
 
-	writel(0x1, comp->regs + DISP_REG_OVL_RDMA_CTRL(idx));
-	writel(OVL_RDMA_MEM_GMC, comp->regs + DISP_REG_OVL_RDMA_GMC(idx));
-
-	reg = readl(comp->regs + DISP_REG_OVL_SRC_CON);
-	reg = reg | BIT(idx);
-	writel(reg, comp->regs + DISP_REG_OVL_SRC_CON);
+	return ovl->data->layer_nr;
 }
 
-static void mtk_ovl_layer_off(struct mtk_ddp_comp *comp, unsigned int idx)
+static void mtk_ovl_layer_on(struct mtk_ddp_comp *comp,
+			unsigned int idx, void *handle)
 {
-	unsigned int reg;
+#ifndef CONFIG_MTK_DISPLAY_CMDQ
+	unsigned int ovl_src_con;
+#endif
+	unsigned int gmc_thrshd_l;
+	unsigned int gmc_thrshd_h;
+	unsigned int gmc_value;
+	struct mtk_disp_ovl *ovl = comp_to_ovl(comp);
 
-	reg = readl(comp->regs + DISP_REG_OVL_SRC_CON);
-	reg = reg & ~BIT(idx);
-	writel(reg, comp->regs + DISP_REG_OVL_SRC_CON);
+	mtk_ddp_write(comp, 0x1, DISP_REG_OVL_RDMA_CTRL(idx), handle);
 
-	writel(0x0, comp->regs + DISP_REG_OVL_RDMA_CTRL(idx));
+	gmc_thrshd_l = GMC_THRESHOLD_LOW >>
+		       (GMC_THRESHOLD_BITS - ovl->data->gmc_bits);
+	gmc_thrshd_h = GMC_THRESHOLD_HIGH >>
+		       (GMC_THRESHOLD_BITS - ovl->data->gmc_bits);
+	if (ovl->data->gmc_bits == 10)
+		gmc_value = gmc_thrshd_h | gmc_thrshd_h << 16;
+	else
+		gmc_value = gmc_thrshd_l | gmc_thrshd_l << 8 |
+			    gmc_thrshd_h << 16 | gmc_thrshd_h << 24;
+	mtk_ddp_write(comp, gmc_value,
+		DISP_REG_OVL_RDMA_GMC(idx), handle);
+
+#ifndef CONFIG_MTK_DISPLAY_CMDQ
+	ovl_src_con = readl(comp->regs + DISP_REG_OVL_SRC_CON);
+	ovl_src_con = ovl_src_con | BIT(idx);
+	writel(ovl_src_con, comp->regs + DISP_REG_OVL_SRC_CON);
+#endif
+
+	mtk_ddp_write_mask(comp, BIT(idx),
+		DISP_REG_OVL_SRC_CON, BIT(idx), handle);
 }
 
-static unsigned int ovl_fmt_convert(struct mtk_disp_ovl *ovl, unsigned int fmt)
+static void mtk_ovl_layer_off(struct mtk_ddp_comp *comp,
+			unsigned int idx, void *handle)
+{
+	MTK_DRM_DEBUG_DRIVER("\n");
+
+	mtk_ddp_write_mask(comp, 0, DISP_REG_OVL_SRC_CON, BIT(idx), handle);
+
+	mtk_ddp_write(comp, 0x0, DISP_REG_OVL_RDMA_CTRL(idx), handle);
+}
+
+static unsigned int ovl_fmt_convert(struct mtk_disp_ovl *ovl,
+				unsigned int fmt)
 {
 	switch (fmt) {
 	default:
@@ -187,10 +260,9 @@ static unsigned int ovl_fmt_convert(struct mtk_disp_ovl *ovl, unsigned int fmt)
 }
 
 static void mtk_ovl_layer_config(struct mtk_ddp_comp *comp, unsigned int idx,
-				 struct mtk_plane_state *state)
+			struct mtk_plane_pending_state *pending, void *handle)
 {
 	struct mtk_disp_ovl *ovl = comp_to_ovl(comp);
-	struct mtk_plane_pending_state *pending = &state->pending;
 	unsigned int addr = pending->addr;
 	unsigned int pitch = pending->pitch & 0xffff;
 	unsigned int fmt = pending->format;
@@ -198,21 +270,40 @@ static void mtk_ovl_layer_config(struct mtk_ddp_comp *comp, unsigned int idx,
 	unsigned int src_size = (pending->height << 16) | pending->width;
 	unsigned int con;
 
+	MTK_DRM_DEBUG_DRIVER(
+	"layer %d enable %d fmt 0x%x (%X %X %X %X) pitch %X addr 0x%X\n",
+	idx, pending->enable, fmt,
+	pending->x, pending->y, pending->width, pending->height, pitch,
+	pending->addr);
+
 	if (!pending->enable)
-		mtk_ovl_layer_off(comp, idx);
+		mtk_ovl_layer_off(comp, idx, handle);
 
 	con = ovl_fmt_convert(ovl, fmt);
 	if (idx != 0)
 		con |= OVL_CON_AEN | OVL_CON_ALPHA;
 
-	writel_relaxed(con, comp->regs + DISP_REG_OVL_CON(idx));
-	writel_relaxed(pitch, comp->regs + DISP_REG_OVL_PITCH(idx));
-	writel_relaxed(src_size, comp->regs + DISP_REG_OVL_SRC_SIZE(idx));
-	writel_relaxed(offset, comp->regs + DISP_REG_OVL_OFFSET(idx));
-	writel_relaxed(addr, comp->regs + DISP_REG_OVL_ADDR(ovl, idx));
+	mtk_ddp_write_relaxed(comp, con, DISP_REG_OVL_CON(idx), handle);
+	mtk_ddp_write_relaxed(comp, pitch, DISP_REG_OVL_PITCH(idx), handle);
+	mtk_ddp_write_relaxed(comp, src_size, DISP_REG_OVL_SRC_SIZE(idx),
+			      handle);
+	mtk_ddp_write_relaxed(comp, offset, DISP_REG_OVL_OFFSET(idx), handle);
+	mtk_ddp_write_relaxed(comp, addr, DISP_REG_OVL_ADDR(ovl, idx), handle);
 
 	if (pending->enable)
-		mtk_ovl_layer_on(comp, idx);
+		mtk_ovl_layer_on(comp, idx, handle);
+}
+
+static void mtk_ovl_bgclr_in_on(struct mtk_ddp_comp *comp,
+				enum mtk_ddp_comp_id prev, void *handle)
+{
+	int is_ovl = 0;
+
+	if (prev == DDP_COMPONENT_OVL0 || prev == DDP_COMPONENT_OVL0_2L)
+		is_ovl = 1;
+
+	mtk_ddp_write_mask(comp, (is_ovl << 2),
+			   DISP_REG_OVL_DATAPATH_CON, OVL_BGCLR_SEL_IN, handle);
 }
 
 static const struct mtk_ddp_comp_funcs mtk_disp_ovl_funcs = {
@@ -221,9 +312,11 @@ static const struct mtk_ddp_comp_funcs mtk_disp_ovl_funcs = {
 	.stop = mtk_ovl_stop,
 	.enable_vblank = mtk_ovl_enable_vblank,
 	.disable_vblank = mtk_ovl_disable_vblank,
+	.layer_nr = mtk_ovl_layer_nr,
 	.layer_on = mtk_ovl_layer_on,
 	.layer_off = mtk_ovl_layer_off,
 	.layer_config = mtk_ovl_layer_config,
+	.bgclr_in_on = mtk_ovl_bgclr_in_on,
 };
 
 static int mtk_disp_ovl_bind(struct device *dev, struct device *master,
@@ -232,6 +325,8 @@ static int mtk_disp_ovl_bind(struct device *dev, struct device *master,
 	struct mtk_disp_ovl *priv = dev_get_drvdata(dev);
 	struct drm_device *drm_dev = data;
 	int ret;
+
+	MTK_DRM_DEBUG_DRIVER("\n");
 
 	ret = mtk_ddp_comp_register(drm_dev, &priv->ddp_comp);
 	if (ret < 0) {
@@ -249,6 +344,8 @@ static void mtk_disp_ovl_unbind(struct device *dev, struct device *master,
 	struct mtk_disp_ovl *priv = dev_get_drvdata(dev);
 	struct drm_device *drm_dev = data;
 
+	MTK_DRM_DEBUG_DRIVER("\n");
+
 	mtk_ddp_comp_unregister(drm_dev, &priv->ddp_comp);
 }
 
@@ -265,6 +362,9 @@ static int mtk_disp_ovl_probe(struct platform_device *pdev)
 	int irq;
 	int ret;
 
+	MTK_DRM_DEBUG_DRIVER("dev_name %s of_node %s\n",
+	dev_name(dev), dev->of_node->name);
+
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -273,7 +373,10 @@ static int mtk_disp_ovl_probe(struct platform_device *pdev)
 	if (irq < 0)
 		return irq;
 
+	priv->data = of_device_get_match_data(dev);
+
 	comp_id = mtk_ddp_comp_get_id(dev->of_node, MTK_DISP_OVL);
+
 	if (comp_id < 0) {
 		dev_err(dev, "Failed to identify by alias: %d\n", comp_id);
 		return comp_id;
@@ -285,8 +388,6 @@ static int mtk_disp_ovl_probe(struct platform_device *pdev)
 		dev_err(dev, "Failed to initialize component: %d\n", ret);
 		return ret;
 	}
-
-	priv->data = of_device_get_match_data(dev);
 
 	platform_set_drvdata(pdev, priv);
 
@@ -301,11 +402,15 @@ static int mtk_disp_ovl_probe(struct platform_device *pdev)
 	if (ret)
 		dev_err(dev, "Failed to add component: %d\n", ret);
 
+	MTK_DRM_DEBUG(dev, "comp_id %d irq %d\n", comp_id, irq);
+
 	return ret;
 }
 
 static int mtk_disp_ovl_remove(struct platform_device *pdev)
 {
+	MTK_DRM_DEBUG_DRIVER("\n");
+
 	component_del(&pdev->dev, &mtk_disp_ovl_component_ops);
 
 	return 0;
@@ -313,17 +418,33 @@ static int mtk_disp_ovl_remove(struct platform_device *pdev)
 
 static const struct mtk_disp_ovl_data mt2701_ovl_driver_data = {
 	.addr = DISP_REG_OVL_ADDR_MT2701,
+	.gmc_bits = 8,
+	.layer_nr = 4,
 	.fmt_rgb565_is_0 = false,
+	.smi_id_en = false,
+};
+
+static const struct mtk_disp_ovl_data mt8168_ovl_driver_data = {
+	.addr = DISP_REG_OVL_ADDR_MT8168,
+	.gmc_bits = 10,
+	.layer_nr = 4,
+	.fmt_rgb565_is_0 = true,
+	.smi_id_en = true,
 };
 
 static const struct mtk_disp_ovl_data mt8173_ovl_driver_data = {
 	.addr = DISP_REG_OVL_ADDR_MT8173,
+	.gmc_bits = 8,
+	.layer_nr = 4,
 	.fmt_rgb565_is_0 = true,
+	.smi_id_en = false,
 };
 
 static const struct of_device_id mtk_disp_ovl_driver_dt_match[] = {
 	{ .compatible = "mediatek,mt2701-disp-ovl",
 	  .data = &mt2701_ovl_driver_data},
+	{ .compatible = "mediatek,mt8168-disp-ovl",
+	  .data = &mt8168_ovl_driver_data},
 	{ .compatible = "mediatek,mt8173-disp-ovl",
 	  .data = &mt8173_ovl_driver_data},
 	{},

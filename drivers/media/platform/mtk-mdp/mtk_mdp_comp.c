@@ -17,7 +17,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
-#include <soc/mediatek/smi.h>
+#include <linux/pm_runtime.h>
 
 #include "mtk_mdp_comp.h"
 
@@ -25,8 +25,10 @@
 static const char * const mtk_mdp_comp_stem[MTK_MDP_COMP_TYPE_MAX] = {
 	"mdp_rdma",
 	"mdp_rsz",
+	"mdp_tdshp",
 	"mdp_wdma",
 	"mdp_wrot",
+	"mdp_ccorr",
 };
 
 struct mtk_mdp_comp_match {
@@ -40,9 +42,11 @@ static const struct mtk_mdp_comp_match mtk_mdp_matches[MTK_MDP_COMP_ID_MAX] = {
 	{ MTK_MDP_RSZ,	0 },
 	{ MTK_MDP_RSZ,	1 },
 	{ MTK_MDP_RSZ,	2 },
+	{ MTK_MDP_TDSHP, 0 },
 	{ MTK_MDP_WDMA,	0 },
 	{ MTK_MDP_WROT,	0 },
 	{ MTK_MDP_WROT,	1 },
+	{ MTK_MDP_CCORR, 0 },
 };
 
 int mtk_mdp_comp_get_id(struct device *dev, struct device_node *node,
@@ -66,9 +70,12 @@ void mtk_mdp_comp_clock_on(struct device *dev, struct mtk_mdp_comp *comp)
 {
 	int i, err;
 
+	if (!comp)
+		return;
+
 	if (comp->larb_dev) {
-		err = mtk_smi_larb_get(comp->larb_dev);
-		if (err)
+		err = pm_runtime_get_sync(comp->larb_dev);
+		if (err < 0)
 			dev_err(dev,
 				"failed to get larb, err %d. type:%d id:%d\n",
 				err, comp->type, comp->id);
@@ -89,6 +96,9 @@ void mtk_mdp_comp_clock_off(struct device *dev, struct mtk_mdp_comp *comp)
 {
 	int i;
 
+	if (!comp)
+		return;
+
 	for (i = 0; i < ARRAY_SIZE(comp->clk); i++) {
 		if (IS_ERR(comp->clk[i]))
 			continue;
@@ -96,7 +106,7 @@ void mtk_mdp_comp_clock_off(struct device *dev, struct mtk_mdp_comp *comp)
 	}
 
 	if (comp->larb_dev)
-		mtk_smi_larb_put(comp->larb_dev);
+		pm_runtime_put_sync(comp->larb_dev);
 }
 
 int mtk_mdp_comp_init(struct device *dev, struct device_node *node,

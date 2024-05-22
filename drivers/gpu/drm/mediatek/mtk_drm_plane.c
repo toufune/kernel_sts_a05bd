@@ -150,6 +150,10 @@ static void mtk_plane_atomic_update(struct drm_plane *plane,
 	state->pending.height = drm_rect_height(&plane->state->dst);
 	wmb(); /* Make sure the above parameters are set before update */
 	state->pending.dirty = true;
+
+#ifdef CONFIG_MTK_DISPLAY_CMDQ
+	mtk_drm_crtc_plane_update(crtc, plane, &state->pending);
+#endif
 }
 
 static void mtk_plane_atomic_disable(struct drm_plane *plane,
@@ -160,6 +164,12 @@ static void mtk_plane_atomic_disable(struct drm_plane *plane,
 	state->pending.enable = false;
 	wmb(); /* Make sure the above parameter is set before update */
 	state->pending.dirty = true;
+
+/* Fetch CRTC from old plane state when disabling. */
+#ifdef CONFIG_MTK_DISPLAY_CMDQ
+	mtk_drm_crtc_plane_update(old_state->crtc, plane, &state->pending);
+#endif
+
 }
 
 static const struct drm_plane_helper_funcs mtk_plane_helper_funcs = {
@@ -175,7 +185,9 @@ int mtk_plane_init(struct drm_device *dev, struct drm_plane *plane,
 
 	err = drm_universal_plane_init(dev, plane, possible_crtcs,
 				       &mtk_plane_funcs, formats,
-				       ARRAY_SIZE(formats), NULL, type, NULL);
+				       ARRAY_SIZE(formats), NULL,
+				       type, NULL);
+
 	if (err) {
 		DRM_ERROR("failed to initialize plane\n");
 		return err;

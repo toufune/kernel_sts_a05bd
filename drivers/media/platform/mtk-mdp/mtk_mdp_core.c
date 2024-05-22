@@ -25,11 +25,15 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/workqueue.h>
-#include <soc/mediatek/smi.h>
+#include <linux/iommu.h>
 
 #include "mtk_mdp_core.h"
 #include "mtk_mdp_m2m.h"
+#ifdef CONFIG_VIDEO_MEDIATEK_VCU
+#include "mtk_mdp_vpu.h"
+#else
 #include "mtk_vpu.h"
+#endif
 
 /* MDP debug log level (0-3). 3 shows all the logs. */
 int mtk_mdp_dbg_level;
@@ -50,12 +54,44 @@ static const struct of_device_id mtk_mdp_comp_dt_ids[] = {
 	}, {
 		.compatible = "mediatek,mt8173-mdp-wrot",
 		.data = (void *)MTK_MDP_WROT
+	}, {
+		.compatible = "mediatek,mt8168-mdp-rdma",
+		.data = (void *)MTK_MDP_RDMA
+	}, {
+		.compatible = "mediatek,mt8168-mdp-rsz",
+		.data = (void *)MTK_MDP_RSZ
+	}, {
+		.compatible = "mediatek,mt8168-mdp-tdshp",
+		.data = (void *)MTK_MDP_TDSHP
+	}, {
+		.compatible = "mediatek,mt8168-mdp-wrot",
+		.data = (void *)MTK_MDP_WROT
+	}, {
+		.compatible = "mediatek,mt8168-mdp-ccorr",
+		.data = (void *)MTK_MDP_CCORR
 	},
 	{ },
 };
 
+const char *mtk_mdp_event_name[MTK_MDP_EVENT_NR] = {
+	"rdma0_sof",
+	"rdma1_sof",
+	"rsz0_sof",
+	"rsz1_sof",
+	"tdshp0_sof",
+	"wrot0_sof",
+	"wrot1_sof",
+	"rdma0_done",
+	"rdma1_done",
+	"wrot0_done",
+	"wrot1_done",
+	"wrot0_sram_ready",
+	"wrot1_sram_ready",
+};
+
 static const struct of_device_id mtk_mdp_of_ids[] = {
-	{ .compatible = "mediatek,mt8173-mdp", },
+	{ .compatible = "mediatek,mt8173-mdp", .data = "platform:mt8173" },
+	{ .compatible = "mediatek,mt8168-mdp", .data = "platform:mt8168" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, mtk_mdp_of_ids);
@@ -92,25 +128,60 @@ static void mtk_mdp_wdt_worker(struct work_struct *work)
 	}
 }
 
+#ifndef CONFIG_VIDEO_MEDIATEK_VCU
 static void mtk_mdp_reset_handler(void *priv)
 {
 	struct mtk_mdp_dev *mdp = priv;
 
 	queue_work(mdp->wdt_wq, &mdp->wdt_work);
 }
+#endif
 
 static int mtk_mdp_probe(struct platform_device *pdev)
 {
 	struct mtk_mdp_dev *mdp;
 	struct device *dev = &pdev->dev;
 	struct device_node *node, *parent;
+	struct platform_device *cmdq_dev;
 	int i, ret = 0;
+	struct iommu_domain *iommu;
+	struct cmdq_pkt *cmdq_handle;
+
+	iommu = iommu_get_domain_for_dev(dev);
+	if (!iommu)
+		return -EPROBE_DEFER;
+
+	/* Check whether cmdq driver is ready */
+	node = of_parse_phandle(dev->of_node, "mediatek,mailbox-gce", 0);
+	if (!node)
+		return -EINVAL;
+
+	cmdq_dev = of_find_device_by_node(node);
+	if (!cmdq_dev || !cmdq_dev->dev.driver) {
+		of_node_put(node);
+		return -EPROBE_DEFER;
+	}
 
 	mdp = devm_kzalloc(dev, sizeof(*mdp), GFP_KERNEL);
 	if (!mdp)
 		return -ENOMEM;
 
-	mdp->id = pdev->id;
+	ret = of_property_read_u32(dev->of_node, "mediatek,mdpid",
+		(u32 *)(void *)&mdp->id);
+	if (ret) {
+		dev_info(dev, "not set mediatek,mdpid, use default id 0.\n");
+		mdp->id = 0;
+	}
+
+	if (mdp->id == 0)
+		strlcpy(mdp->driver, MTK_MDP_MODULE_NAME, sizeof(mdp->driver));
+	else
+		ret = snprintf(mdp->driver, sizeof(mdp->driver), "%s-%d",
+			MTK_MDP_MODULE_NAME, mdp->id);
+
+	strlcpy(mdp->platform, of_device_get_match_data(dev),
+		sizeof(mdp->platform));
+
 	mdp->pdev = pdev;
 	INIT_LIST_HEAD(&mdp->ctx_list);
 
@@ -136,19 +207,13 @@ static int mtk_mdp_probe(struct platform_device *pdev)
 		if (!of_id)
 			continue;
 
-		if (!of_device_is_available(node)) {
-			dev_err(dev, "Skipping disabled component %pOF\n",
-				node);
+		if (!of_device_is_available(node))
 			continue;
-		}
 
 		comp_type = (enum mtk_mdp_comp_type)of_id->data;
 		comp_id = mtk_mdp_comp_get_id(dev, node, comp_type);
-		if (comp_id < 0) {
-			dev_warn(dev, "Skipping unknown component %pOF\n",
-				 node);
+		if (comp_id < 0)
 			continue;
-		}
 
 		comp = devm_kzalloc(dev, sizeof(*comp), GFP_KERNEL);
 		if (!comp) {
@@ -191,14 +256,38 @@ static int mtk_mdp_probe(struct platform_device *pdev)
 	}
 
 	mdp->vpu_dev = vpu_get_plat_device(pdev);
+
+#ifndef CONFIG_VIDEO_MEDIATEK_VCU
 	vpu_wdt_reg_handler(mdp->vpu_dev, mtk_mdp_reset_handler, mdp,
 			    VPU_RST_MDP);
+#endif
 
 	platform_set_drvdata(pdev, mdp);
 
 	vb2_dma_contig_set_max_seg_size(&pdev->dev, DMA_BIT_MASK(32));
 
 	pm_runtime_enable(dev);
+
+	mdp->cmdq_client = cmdq_mbox_create(dev, 0);
+
+	cmdq_pkt_cl_create(&cmdq_handle, mdp->cmdq_client);
+
+	for (i = 0; i < MTK_MDP_EVENT_NR - 1; i++) {
+		mdp->cmdq_event[i] =
+			cmdq_dev_get_event(dev, mtk_mdp_event_name[i]);
+		pr_info("%s id %d\n",
+			mtk_mdp_event_name[i], mdp->cmdq_event[i]);
+		cmdq_pkt_clear_event(cmdq_handle, mdp->cmdq_event[i]);
+	}
+
+	mdp->cmdq_event[i] = cmdq_dev_get_event(dev, mtk_mdp_event_name[i]);
+	pr_info("%s id %d\n", mtk_mdp_event_name[i], mdp->cmdq_event[i]);
+	cmdq_pkt_set_event(cmdq_handle, mdp->cmdq_event[i]);
+
+	ret = cmdq_pkt_flush(mdp->cmdq_client, cmdq_handle);
+	pr_info("flush cmdq cmdq_client 0x%p cmdq_handle 0x%p ret %d\n",
+	mdp->cmdq_client, cmdq_handle, ret);
+	cmdq_pkt_destroy(cmdq_handle);
 	dev_dbg(dev, "mdp-%d registered successfully\n", mdp->id);
 
 	return 0;
@@ -237,6 +326,8 @@ static int mtk_mdp_remove(struct platform_device *pdev)
 
 	for (i = 0; i < ARRAY_SIZE(mdp->comp); i++)
 		mtk_mdp_comp_deinit(&pdev->dev, mdp->comp[i]);
+
+	cmdq_mbox_destroy(mdp->cmdq_client);
 
 	dev_dbg(&pdev->dev, "%s driver unloaded\n", pdev->name);
 	return 0;

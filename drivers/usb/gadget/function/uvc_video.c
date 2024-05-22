@@ -105,24 +105,33 @@ uvc_video_encode_isoc(struct usb_request *req, struct uvc_video *video,
 	void *mem = req->buf;
 	int len = video->req_size;
 	int ret;
+	int req_len = 0;
+	int data_len = 0;
 
-	/* Add the header. */
-	ret = uvc_video_encode_header(video, buf, mem, len);
-	mem += ret;
-	len -= ret;
+	req->zlp_req = 1;
 
-	/* Process video data. */
-	ret = uvc_video_encode_data(video, buf, mem, len);
-	len -= ret;
+	while (req_len < len) {
+		/* Add the header. */
+		data_len = video->ep->maxpacket*(video->ep->mult);
+		ret = uvc_video_encode_header(video, buf, mem, data_len);
+		mem += ret;
+		req_len += ret;
+		/* Process video data. */
+		data_len = video->ep->maxpacket*(video->ep->mult)-2;
+		ret = uvc_video_encode_data(video, buf, mem, data_len);
+		mem += ret;
+		req_len += ret;
 
-	req->length = video->req_size - len;
-
-	if (buf->bytesused == video->queue.buf_used) {
-		video->queue.buf_used = 0;
-		buf->state = UVC_BUF_STATE_DONE;
-		uvcg_queue_next_buffer(&video->queue, buf);
-		video->fid ^= UVC_STREAM_FID;
+		if (buf->bytesused == video->queue.buf_used) {
+			video->queue.buf_used = 0;
+			buf->state = UVC_BUF_STATE_DONE;
+			uvcg_queue_next_buffer(&video->queue, buf);
+			video->fid ^= UVC_STREAM_FID;
+			break;
+		}
 	}
+	req->length = req_len;
+
 }
 
 /* --------------------------------------------------------------------------
@@ -235,15 +244,13 @@ uvc_video_free_requests(struct uvc_video *video)
 static int
 uvc_video_alloc_requests(struct uvc_video *video)
 {
-	unsigned int req_size;
+	unsigned int req_size = 0;
 	unsigned int i;
 	int ret = -ENOMEM;
 
 	BUG_ON(video->req_size);
 
-	req_size = video->ep->maxpacket
-		 * max_t(unsigned int, video->ep->maxburst, 1)
-		 * (video->ep->mult);
+	req_size = 48*1024;
 
 	for (i = 0; i < UVC_NUM_REQUESTS; ++i) {
 		video->req_buffer[i] = kmalloc(req_size, GFP_KERNEL);

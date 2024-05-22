@@ -661,9 +661,8 @@ finish:
 		;	/* nothing to do */
 	} else if (handled == USB_GADGET_DELAYED_STATUS) {
 		/* handle the delay STATUS phase till receive ep_queue on ep0 */
-		mtu->delayed_status = true;
+		/*mtu->delayed_status = true;*/
 	} else if (le16_to_cpu(setup.wLength) == 0) { /* no data stage */
-
 		mtu3_writel(mbase, U3D_EP0CSR,
 			(mtu3_readl(mbase, U3D_EP0CSR) & EP0_W1C_BITS)
 			| EP0_SETUPPKTRDY | EP0_DATAEND);

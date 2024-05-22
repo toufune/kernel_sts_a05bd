@@ -88,7 +88,6 @@
 #define NFI_FDM_MAX_SIZE	(8)
 #define NFI_FDM_MIN_SIZE	(1)
 #define NFI_MASTER_STA		(0x224)
-#define		MASTER_STA_MASK		(0x0FFF)
 #define NFI_EMPTY_THRESH	(0x23C)
 
 #define MTK_NAME		"mtk-nand"
@@ -109,6 +108,8 @@ struct mtk_nfc_caps {
 	u8 num_spare_size;
 	u8 pageformat_spare_shift;
 	u8 nfi_clk_div;
+	int irq_event_bit;
+	u32 master_sta_mask;
 };
 
 struct mtk_nfc_bad_mark_ctl {
@@ -264,7 +265,7 @@ static void mtk_nfc_hw_reset(struct mtk_nfc *nfc)
 
 	/* wait for the master to finish the last transaction */
 	ret = readl_poll_timeout(nfc->regs + NFI_MASTER_STA, val,
-				 !(val & MASTER_STA_MASK), 50,
+				 !(val & nfc->caps->master_sta_mask), 50,
 				 MTK_RESET_TIMEOUT);
 	if (ret)
 		dev_warn(dev, "master active in reset [0x%x] = 0x%x\n",
@@ -721,7 +722,10 @@ static int mtk_nfc_do_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 
 	nfi_writel(nfc, chip->ecc.steps << CON_SEC_SHIFT, NFI_CON);
 	nfi_writel(nfc, lower_32_bits(addr), NFI_STRADDR);
-	nfi_writew(nfc, INTR_AHB_DONE_EN, NFI_INTR_EN);
+	reg = INTR_AHB_DONE_EN;
+	if (nfc->caps->irq_event_bit > 0)
+		reg |= BIT(nfc->caps->irq_event_bit);
+	nfi_writel(nfc, reg, NFI_INTR_EN);
 
 	init_completion(&nfc->done);
 
@@ -732,7 +736,7 @@ static int mtk_nfc_do_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 	ret = wait_for_completion_timeout(&nfc->done, msecs_to_jiffies(500));
 	if (!ret) {
 		dev_err(dev, "program ahb done timeout\n");
-		nfi_writew(nfc, 0, NFI_INTR_EN);
+		nfi_writel(nfc, 0, NFI_INTR_EN);
 		ret = -ETIMEDOUT;
 		goto timeout;
 	}
@@ -928,7 +932,10 @@ static int mtk_nfc_read_subpage(struct mtd_info *mtd, struct nand_chip *chip,
 	}
 
 	nfi_writel(nfc, sectors << CON_SEC_SHIFT, NFI_CON);
-	nfi_writew(nfc, INTR_AHB_DONE_EN, NFI_INTR_EN);
+	reg = INTR_AHB_DONE_EN;
+	if (nfc->caps->irq_event_bit > 0)
+		reg |= BIT(nfc->caps->irq_event_bit);
+	nfi_writel(nfc, reg, NFI_INTR_EN);
 	nfi_writel(nfc, lower_32_bits(addr), NFI_STRADDR);
 
 	init_completion(&nfc->done);
@@ -1041,15 +1048,15 @@ static inline void mtk_nfc_hw_init(struct mtk_nfc *nfc)
 static irqreturn_t mtk_nfc_irq(int irq, void *id)
 {
 	struct mtk_nfc *nfc = id;
-	u16 sta, ien;
+	u32 sta, ien;
 
-	sta = nfi_readw(nfc, NFI_INTR_STA);
-	ien = nfi_readw(nfc, NFI_INTR_EN);
+	sta = nfi_readl(nfc, NFI_INTR_STA);
+	ien = nfi_readl(nfc, NFI_INTR_EN);
 
 	if (!(sta & ien))
 		return IRQ_NONE;
 
-	nfi_writew(nfc, ~sta & ien, NFI_INTR_EN);
+	nfi_writel(nfc, ~sta & ien, NFI_INTR_EN);
 	complete(&nfc->done);
 
 	return IRQ_HANDLED;
@@ -1248,6 +1255,8 @@ static int mtk_nfc_ecc_init(struct device *dev, struct mtd_info *mtd)
 	return 0;
 }
 
+static const char * const part_types[] = {"gptpart", "ofpart", NULL};
+
 static int mtk_nfc_nand_chip_init(struct device *dev, struct mtk_nfc *nfc,
 				  struct device_node *np)
 {
@@ -1355,7 +1364,7 @@ static int mtk_nfc_nand_chip_init(struct device *dev, struct mtk_nfc *nfc,
 	if (ret)
 		return ret;
 
-	ret = mtd_device_parse_register(mtd, NULL, NULL, NULL, 0);
+	ret = mtd_device_parse_register(mtd, part_types, NULL, NULL, 0);
 	if (ret) {
 		dev_err(dev, "mtd parse partition error\n");
 		nand_release(mtd);
@@ -1389,6 +1398,8 @@ static const struct mtk_nfc_caps mtk_nfc_caps_mt2701 = {
 	.num_spare_size = 16,
 	.pageformat_spare_shift = 4,
 	.nfi_clk_div = 1,
+	.irq_event_bit = -1,
+	.master_sta_mask = 0xfff,
 };
 
 static const struct mtk_nfc_caps mtk_nfc_caps_mt2712 = {
@@ -1396,6 +1407,17 @@ static const struct mtk_nfc_caps mtk_nfc_caps_mt2712 = {
 	.num_spare_size = 19,
 	.pageformat_spare_shift = 16,
 	.nfi_clk_div = 2,
+	.irq_event_bit = -1,
+	.master_sta_mask = 0xfff,
+};
+
+static const struct mtk_nfc_caps mtk_nfc_caps_mt8168 = {
+	.spare_size = spare_size_mt2712,
+	.num_spare_size = 19,
+	.pageformat_spare_shift = 16,
+	.nfi_clk_div = 2,
+	.irq_event_bit = 31,
+	.master_sta_mask = 0x3,
 };
 
 static const struct of_device_id mtk_nfc_id_table[] = {
@@ -1405,6 +1427,9 @@ static const struct of_device_id mtk_nfc_id_table[] = {
 	}, {
 		.compatible = "mediatek,mt2712-nfc",
 		.data = &mtk_nfc_caps_mt2712,
+	}, {
+		.compatible = "mediatek,mt8168-nfc",
+		.data = &mtk_nfc_caps_mt8168,
 	},
 	{}
 };

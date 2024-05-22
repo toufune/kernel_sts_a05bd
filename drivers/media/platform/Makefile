@@ -80,14 +80,21 @@ ccflags-y += -I$(srctree)/drivers/media/i2c
 
 obj-$(CONFIG_VIDEO_MEDIATEK_VPU)	+= mtk-vpu/
 
+obj-$(CONFIG_VIDEO_MEDIATEK_VCU)	+= mtk-vcu/
+
 obj-$(CONFIG_VIDEO_MEDIATEK_VCODEC)	+= mtk-vcodec/
+obj-$(CONFIG_VB2_MEDIATEK_DMA_CONTIG)	+= mtk-videobuf/
 
 obj-$(CONFIG_VIDEO_MEDIATEK_MDP)	+= mtk-mdp/
+obj-$(CONFIG_VIDEO_MEDIATEK_MDP_VCU)	+= mtk-mdp/
 
 obj-$(CONFIG_VIDEO_MEDIATEK_JPEG)	+= mtk-jpeg/
+obj-$(CONFIG_VIDEO_MEDIATEK_WARP)       += mtk-warp/
 
 obj-$(CONFIG_VIDEO_QCOM_CAMSS)		+= qcom/camss-8x16/
 
 obj-$(CONFIG_VIDEO_QCOM_VENUS)		+= qcom/venus/
 
 obj-y					+= meson/
+
+obj-$(CONFIG_VIDEO_MEDIATEK_CAMERA)	+= mtk-camera/

@@ -52,6 +52,7 @@ uvc_send_response(struct uvc_device *uvc, struct uvc_request_data *data)
 /* --------------------------------------------------------------------------
  * V4L2 ioctls
  */
+#define UVC_FORMAT_H264_SUPPORT			0
 
 struct uvc_format {
 	u8 bpp;
@@ -61,6 +62,9 @@ struct uvc_format {
 static struct uvc_format uvc_formats[] = {
 	{ 16, V4L2_PIX_FMT_YUYV  },
 	{ 0,  V4L2_PIX_FMT_MJPEG },
+	#if UVC_FORMAT_H264_SUPPORT
+	{ 16, V4L2_PIX_FMT_H264  },
+	#endif
 };
 
 static int
@@ -96,6 +100,22 @@ uvc_v4l2_get_format(struct file *file, void *fh, struct v4l2_format *fmt)
 	fmt->fmt.pix.sizeimage = video->imagesize;
 	fmt->fmt.pix.colorspace = V4L2_COLORSPACE_SRGB;
 	fmt->fmt.pix.priv = 0;
+
+	return 0;
+}
+
+static int uvc_enum_fmt(struct file *file, void *fh,
+				      struct v4l2_fmtdesc *fmt)
+{
+	u32 f_index = 0;
+
+	if (fmt->index >= ARRAY_SIZE(uvc_formats))
+		return -EINVAL;
+
+	f_index = fmt->index;
+	memset(fmt, 0, sizeof(*fmt));
+	fmt->index = f_index;
+	fmt->pixelformat = uvc_formats[fmt->index].fcc;
 
 	return 0;
 }
@@ -261,8 +281,95 @@ uvc_v4l2_ioctl_default(struct file *file, void *fh, bool valid_prio,
 	}
 }
 
+static int uvc_v4l2_enum_framesizes(struct file *file, void *fh,
+				     struct v4l2_frmsizeenum *fsize)
+{
+
+	if (fsize->pixel_format == V4L2_PIX_FMT_MJPEG) {
+		switch (fsize->index) {
+		case 0:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 640;
+			fsize->discrete.height = 360;
+			break;
+		case 1:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 1280;
+			fsize->discrete.height = 720;
+			break;
+		case 2:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 640;
+			fsize->discrete.height = 480;
+			break;
+		case 3:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 800;
+			fsize->discrete.height = 600;
+			break;
+		case 4:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 960;
+			fsize->discrete.height = 540;
+			break;
+		case 5:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 1920;
+			fsize->discrete.height = 1080;
+			break;
+		default:
+			return -EINVAL;
+		}
+	} else if (fsize->pixel_format == V4L2_PIX_FMT_YUYV) {
+		switch (fsize->index) {
+		case 0:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 640;
+			fsize->discrete.height = 360;
+			break;
+		case 1:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 1280;
+			fsize->discrete.height = 720;
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
+	#if UVC_FORMAT_H264_SUPPORT
+	if (fsize->pixel_format == V4L2_PIX_FMT_H264) {
+		switch (fsize->index) {
+		case 0:
+			fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+			fsize->discrete.width = 1920;
+			fsize->discrete.height = 1080;
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
+	#endif
+	return 0;
+}
+
+static int uvc_v4l2_enum_frameintervals(struct file *file, void *fh,
+					 struct v4l2_frmivalenum *fival)
+{
+
+	if (fival->index > 5)
+		return -EINVAL;
+
+	fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
+	fival->discrete.numerator = 1;
+	fival->discrete.denominator = 15;
+
+	return 0;
+}
+
+
 const struct v4l2_ioctl_ops uvc_v4l2_ioctl_ops = {
 	.vidioc_querycap = uvc_v4l2_querycap,
+	.vidioc_enum_fmt_vid_out = uvc_enum_fmt,
 	.vidioc_g_fmt_vid_out = uvc_v4l2_get_format,
 	.vidioc_s_fmt_vid_out = uvc_v4l2_set_format,
 	.vidioc_reqbufs = uvc_v4l2_reqbufs,
@@ -274,6 +381,8 @@ const struct v4l2_ioctl_ops uvc_v4l2_ioctl_ops = {
 	.vidioc_subscribe_event = uvc_v4l2_subscribe_event,
 	.vidioc_unsubscribe_event = uvc_v4l2_unsubscribe_event,
 	.vidioc_default = uvc_v4l2_ioctl_default,
+	.vidioc_enum_framesizes = uvc_v4l2_enum_framesizes,
+	.vidioc_enum_frameintervals = uvc_v4l2_enum_frameintervals,
 };
 
 /* --------------------------------------------------------------------------
@@ -286,7 +395,7 @@ uvc_v4l2_open(struct file *file)
 	struct video_device *vdev = video_devdata(file);
 	struct uvc_device *uvc = video_get_drvdata(vdev);
 	struct uvc_file_handle *handle;
-
+	int uvc_ret = 0;
 	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
 	if (handle == NULL)
 		return -ENOMEM;
@@ -297,8 +406,8 @@ uvc_v4l2_open(struct file *file)
 	handle->device = &uvc->video;
 	file->private_data = &handle->vfh;
 
-	uvc_function_connect(uvc);
-	return 0;
+	uvc_ret = uvc_function_connect(uvc);
+	return uvc_ret;
 }
 
 static int

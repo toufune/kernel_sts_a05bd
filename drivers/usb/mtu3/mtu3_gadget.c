@@ -17,6 +17,9 @@
  */
 
 #include "mtu3.h"
+#include <linux/usb/composite.h>
+
+static int usb_rdy;
 
 void mtu3_req_complete(struct mtu3_ep *mep,
 		     struct usb_request *req, int status)
@@ -478,6 +481,20 @@ static int mtu3_gadget_set_self_powered(struct usb_gadget *gadget,
 	return 0;
 }
 
+void set_usb_rdy(void)
+{
+	usb_rdy = 1;
+}
+
+bool is_usb_rdy(void)
+{
+	if (usb_rdy)
+		return true;
+	else
+		return false;
+}
+EXPORT_SYMBOL_GPL(is_usb_rdy);
+
 static int mtu3_gadget_pullup(struct usb_gadget *gadget, int is_on)
 {
 	struct mtu3 *mtu = gadget_to_mtu3(gadget);
@@ -499,6 +516,30 @@ static int mtu3_gadget_pullup(struct usb_gadget *gadget, int is_on)
 	}
 
 	spin_unlock_irqrestore(&mtu->lock, flags);
+
+	if (is_usb_rdy() == false && is_on)
+		set_usb_rdy();
+
+	return 0;
+}
+
+static int mtu3_gadget_ioctl(struct usb_gadget *gadget,
+		unsigned int code, unsigned long param)
+{
+	struct mtu3 *mtu = gadget_to_mtu3(gadget);
+
+	switch (code) {
+	case USB_GADGET_DELAYED_STATUS:
+		if (param > 0)
+			mtu->delayed_status = true;
+		else
+			mtu->delayed_status = false;
+
+		break;
+	default:
+		dev_err(mtu->dev, "%s error ioctl\n",
+				mtu->g.name);
+	}
 
 	return 0;
 }
@@ -589,6 +630,7 @@ static const struct usb_gadget_ops mtu3_gadget_ops = {
 	.wakeup = mtu3_gadget_wakeup,
 	.set_selfpowered = mtu3_gadget_set_self_powered,
 	.pullup = mtu3_gadget_pullup,
+	.ioctl = mtu3_gadget_ioctl,
 	.udc_start = mtu3_gadget_start,
 	.udc_stop = mtu3_gadget_stop,
 };

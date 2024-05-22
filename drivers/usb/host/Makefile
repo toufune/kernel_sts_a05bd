@@ -18,6 +18,10 @@ ifneq ($(CONFIG_USB_XHCI_MTK), )
 	xhci-hcd-y += xhci-mtk-sch.o
 endif
 
+ifneq ($(CONFIG_USB_MTK_HQA_TEST), )
+	xhci-hcd-y += xhci-mtk-test.o
+endif
+
 xhci-plat-hcd-y := xhci-plat.o
 ifneq ($(CONFIG_USB_XHCI_MVEBU), )
 	xhci-plat-hcd-y		+= xhci-mvebu.o

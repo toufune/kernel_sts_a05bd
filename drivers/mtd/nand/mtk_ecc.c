@@ -427,6 +427,9 @@ static const struct of_device_id mtk_ecc_dt_match[] = {
 	}, {
 		.compatible = "mediatek,mt2712-ecc",
 		.data = &mtk_ecc_caps_mt2712,
+	}, {
+		.compatible = "mediatek,mt8168-ecc",
+		.data = &mtk_ecc_caps_mt2712,
 	},
 	{},
 };

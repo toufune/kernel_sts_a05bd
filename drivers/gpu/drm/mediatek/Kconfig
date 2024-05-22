@@ -9,13 +9,25 @@ config DRM_MEDIATEK
 	select DRM_KMS_HELPER
 	select DRM_MIPI_DSI
 	select DRM_PANEL
+	select IOMMU_DMA
 	select MEMORY
 	select MTK_SMI
+	select MTK_DISPLAY_CMDQ
+	select MTK_CMDQ
+	select VIDEOMODE_HELPERS
 	help
 	  Choose this option if you have a Mediatek SoCs.
 	  The module will be called mediatek-drm
 	  This driver provides kernel mode setting and
 	  buffer management to userspace.
+
+config MTK_DISPLAY_CMDQ
+    bool "CMDQ Support for Mediatek DRM driver"
+    help
+      Choose this option if you have a Mediatek SoCs.
+      The module will be called mediatek-drm
+      This driver provides kernel mode setting and
+      buffer management to userspace.
 
 config DRM_MEDIATEK_HDMI
 	tristate "DRM HDMI Support for Mediatek SoCs"
@@ -23,4 +35,10 @@ config DRM_MEDIATEK_HDMI
 	select SND_SOC_HDMI_CODEC if SND_SOC
 	select GENERIC_PHY
 	help
-	  DRM/KMS HDMI driver for Mediatek SoCs
+	  DRM/KMS HDMI driver for Mediatek SoCs.
+
+config MTK_DRM_DISABLE_WB_SUPPORT
+	tristate "disable writeback Support for Mediatek SoCs"
+	default n
+	help
+	  disable writeback Support for Mediatek SoCs.

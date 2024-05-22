@@ -24,6 +24,7 @@
 #include <linux/platform_device.h>
 
 #include "mtu3.h"
+#include "mtu3_dr.h"
 
 static int ep_fifo_alloc(struct mtu3_ep *mep, u32 seg_size)
 {
@@ -633,10 +634,17 @@ static irqreturn_t mtu3_link_isr(struct mtu3 *mtu)
 	mtu->g.ep0->maxpacket = maxpkt;
 	mtu->ep0_state = MU3D_EP0_STATE_SETUP;
 
-	if (udev_speed == USB_SPEED_UNKNOWN)
+	if (udev_speed == USB_SPEED_UNKNOWN) {
 		mtu3_gadget_disconnect(mtu);
-	else
+		#if IS_ENABLED(CONFIG_DUAL_ROLE_USB_INTF)
+		mtu3_drp_to_none(mtu);
+		#endif
+	} else {
 		mtu3_ep0_setup(mtu);
+		#if IS_ENABLED(CONFIG_DUAL_ROLE_USB_INTF)
+		mtu3_drp_to_device(mtu);
+		#endif
+	}
 
 	return IRQ_HANDLED;
 }

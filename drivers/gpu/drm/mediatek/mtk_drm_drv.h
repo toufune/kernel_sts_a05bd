@@ -14,7 +14,9 @@
 #ifndef MTK_DRM_DRV_H
 #define MTK_DRM_DRV_H
 
+#include <drm/drm_fb_helper.h>
 #include <linux/io.h>
+#include "mtk_drm_ddp.h"
 #include "mtk_drm_ddp_comp.h"
 
 #define MAX_CRTC	2
@@ -24,7 +26,6 @@ struct device;
 struct device_node;
 struct drm_crtc;
 struct drm_device;
-struct drm_fb_helper;
 struct drm_property;
 struct regmap;
 
@@ -33,18 +34,22 @@ struct mtk_mmsys_driver_data {
 	unsigned int main_len;
 	const enum mtk_ddp_comp_id *ext_path;
 	unsigned int ext_len;
+	enum mtk_mmsys_id mmsys_id;
 	bool shadow_register;
+	bool dither_exist;
 };
 
 struct mtk_drm_private {
 	struct drm_device *drm;
 	struct device *dma_dev;
 
+	struct drm_crtc *crtc[MAX_CRTC];
 	unsigned int num_pipes;
 
 	struct device_node *mutex_node;
 	struct device *mutex_dev;
 	void __iomem *config_regs;
+	const struct mtk_mmsys_reg_data *reg_data;
 	struct device_node *comp_node[DDP_COMPONENT_ID_MAX];
 	struct mtk_ddp_comp *ddp_comp[DDP_COMPONENT_ID_MAX];
 	const struct mtk_mmsys_driver_data *data;
@@ -56,6 +61,8 @@ struct mtk_drm_private {
 	} commit;
 
 	struct drm_atomic_state *suspend_state;
+	struct drm_fb_helper fb_helper;
+	struct drm_gem_object *fbdev_bo;
 };
 
 extern struct platform_driver mtk_ddp_driver;

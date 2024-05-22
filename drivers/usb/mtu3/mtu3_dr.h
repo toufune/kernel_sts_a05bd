@@ -87,7 +87,7 @@ static inline void ssusb_gadget_exit(struct ssusb_mtk *ssusb)
 int ssusb_otg_switch_init(struct ssusb_mtk *ssusb);
 void ssusb_otg_switch_exit(struct ssusb_mtk *ssusb);
 int ssusb_set_vbus(struct otg_switch_mtk *otg_sx, int is_on);
-
+int ssusb_otg_detect(struct ssusb_mtk *ssusb);
 #else
 
 static inline int ssusb_otg_switch_init(struct ssusb_mtk *ssusb)
@@ -103,6 +103,26 @@ static inline int ssusb_set_vbus(struct otg_switch_mtk *otg_sx, int is_on)
 	return 0;
 }
 
+int ssusb_otg_detect(struct ssusb_mtk *ssusb)
+{
+	return 0;
+}
 #endif
 
+#if IS_ENABLED(CONFIG_USB_MTU3_DUAL_ROLE)
+#if IS_ENABLED(CONFIG_DUAL_ROLE_USB_INTF)
+void mtu3_drp_to_none(struct mtu3 *mtu3);
+void mtu3_drp_to_device(struct mtu3 *mtu3);
+void mtu3_drp_to_host(struct mtu3 *mtu3);
+#else
+static inline void mtu3_drp_to_none(struct mtu3 *mtu3)
+{}
+
+static inline void mtu3_drp_to_device(struct mtu3 *mtu3)
+{}
+
+static inline void mtu3_drp_to_host(struct mtu3 *mtu3)
+{}
+#endif
+#endif
 #endif		/* _MTU3_DR_H_ */
