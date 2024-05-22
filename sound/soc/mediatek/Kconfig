@@ -32,6 +32,54 @@ config SND_SOC_MT2701_WM8960
 	  Select Y if you have such device.
 	  If unsure select "N".
 
+config SND_SOC_MT8133_M1
+	tristate "ASoC Audio driver for MT8133 M1 Board"
+	depends on SND_SOC_MT8168
+	help
+	  This adds support for ASoC machine driver for Mediatek MT8133
+	  that used MT6357 codec.
+	  Select Y if you have such device.
+	  If unsure select "N".
+	  Ex: MT8133
+
+config SND_SOC_MT8168
+	tristate "ASoC support for Mediatek MT8168 chip"
+	depends on ARCH_MEDIATEK
+	select SND_SOC_MEDIATEK
+	help
+	  This adds ASoC platform driver support for Mediatek MT8168 chip
+	  that can be used with other codecs.
+	  Select Y if you have such device.
+	  Ex: MT8168
+
+config SND_SOC_MT8168_EVB
+	tristate "ASoC Audio driver for MT8168 EVB Board"
+	depends on SND_SOC_MT8168
+	help
+	  This adds support for ASoC machine driver for Mediatek MT8168.
+	  Select Y if you have such device.
+	  If unsure select "N".
+	  Ex: MT8168
+
+config SND_SOC_MT8168_FPGA
+	tristate "ASoC Audio driver for MT8168 Early Porting"
+	depends on SND_SOC_MT8168
+	help
+	  This adds ASoC driver for Mediatek MT8168 FPGA boards
+	  Select Y if you have such device.
+	  If unsure select "N".
+	  Ex: MT8168
+
+config SND_SOC_MT8168_P1
+	tristate "ASoC Audio driver for MT8168 P1 Board"
+	depends on SND_SOC_MT8168
+	help
+	  This adds support for ASoC machine driver for Mediatek MT8168
+	  that used MT6357 codec.
+	  Select Y if you have such device.
+	  If unsure select "N".
+	  Ex: MT8168
+
 config SND_SOC_MT8173
 	tristate "ASoC support for Mediatek MT8173 chip"
 	depends on ARCH_MEDIATEK
@@ -85,3 +133,31 @@ config SND_SOC_MT8173_RT5650_RT5676
 	  with the RT5650 and RT5676 codecs.
 	  Select Y if you have such device.
 	  If unsure select "N".
+
+config MTK_SND_SOC_CODEC
+	string "String for Mediatek audio codec"
+	help
+	  Specify Mediatek audio codec.
+	  It depend on the string to choose the audio codec.
+	  Say "mt6351" if you have mt6351 audio codec.
+	  Say "mt6337" if you have mt6337 audio codec.
+	  Say "mt6355" if you have mt6355 audio codec.
+
+config SND_SOC_MTK_BTCVSD
+	bool "MTK BT CVSD ALSA ARICHITECTURE"
+	default n
+	help
+	  If you say Y, enable SND_SOC_MTK_BTCVSD.
+	  This is for software BTCVSD. This enable
+	  the function for transferring/receiving
+	  BT encoded data to/from BT firmware.
+
+config MTK_SND_SOC_NEW_ARCH
+	bool "Support new audio architecture"
+	select REGMAP_MMIO
+	help
+	  If you say Y, enable MTK_SND_SOC_NEW_ARCH.
+	  Only enable this when you use refactored audio driver architecture.
+	  If new chip after mt6757, we will enable this config.
+	  Audio driver refactor to common folder and platform folder.
+
